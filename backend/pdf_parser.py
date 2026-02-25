@@ -74,6 +74,9 @@ def parse_pdf(file_stream: bytes, filename: str = "document.pdf") -> Dict:
     final_text = _clean_text(combined_md)
     print(f"[PDF Parser V3] OCR 与清洗完成，最终文本长度: {len(final_text)}")
 
+    # Step 5: 利用 OCR 全文为图片上下文做语义富化（零额外 API 调用）
+    _enrich_image_contexts(images_data, final_text)
+
     return {
         "text": final_text,
         "is_scanned": True, # 对于下游流程统一，因为我们已经全部通过 OCR 和 Markdown 提取了
@@ -272,3 +275,69 @@ def _clean_text(raw: str) -> str:
     cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufeff\u200b\u200c\u200d\ufff0-\uffff]", "", raw)
     cleaned = re.sub(r"\n{4,}", "\n\n\n", cleaned)
     return cleaned.strip()
+
+
+def _enrich_image_contexts(images_data: List[Dict], full_text: str) -> None:
+    """
+    利用已有的 OCR Markdown 全文，为每张图片的上下文做语义富化。
+    
+    原理：图片的短 caption_context (由物理距离抓取) 往往干瘪，
+    但 OCR 全文中几乎一定包含了对该图片更详细的描述段落。
+    我们用 caption 中的关键词做模糊锚点匹配，精准截取这段富文本。
+    
+    零额外 API 调用 —— 纯字符串操作，耗时 < 50ms。
+    """
+    if not images_data or not full_text:
+        return
+    
+    # 将全文切成段落（按双换行分割），每个段落作为匹配候选
+    paragraphs = [p.strip() for p in re.split(r'\n{2,}', full_text) if p.strip() and len(p.strip()) > 20]
+    
+    if not paragraphs:
+        print("[PDF Parser V3] 全文段落为空，跳过图片上下文富化")
+        return
+    
+    enriched_count = 0
+    
+    for img in images_data:
+        caption = img.get("caption_context", "")
+        if not caption or len(caption) < 5:
+            continue
+        
+        # 提取 caption 中的关键词（去掉常见停用词和短词）
+        # 用中文按字符切和英文按空格切的混合方式
+        keywords = set()
+        for word in re.findall(r'[\u4e00-\u9fff]{2,}|[a-zA-Z]{3,}', caption):
+            keywords.add(word.lower())
+        
+        if not keywords:
+            continue
+        
+        # 在全文段落中找"命中关键词最多"的段落
+        best_para_idx = -1
+        best_score = 0
+        
+        for pidx, para in enumerate(paragraphs):
+            para_lower = para.lower()
+            score = sum(1 for kw in keywords if kw in para_lower)
+            if score > best_score:
+                best_score = score
+                best_para_idx = pidx
+        
+        if best_para_idx >= 0 and best_score >= 2:
+            # 以最佳段落为中心，取前后1段，拼接成 ~500 字的富上下文
+            start = max(0, best_para_idx - 1)
+            end = min(len(paragraphs), best_para_idx + 2)
+            rich_context = "\n".join(paragraphs[start:end])
+            
+            # 限制长度，防止过长
+            if len(rich_context) > 800:
+                rich_context = rich_context[:800]
+            
+            img["rich_context"] = rich_context
+            enriched_count += 1
+        else:
+            # 回退：用原始 caption 作为 rich_context
+            img["rich_context"] = caption
+    
+    print(f"[PDF Parser V3] 图片上下文富化完成: {enriched_count}/{len(images_data)} 张图片成功匹配到 OCR 全文段落")

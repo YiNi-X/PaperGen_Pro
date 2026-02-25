@@ -555,6 +555,69 @@ def _get_chapter_context(heading: str, points: list, full_text: str, vector_stor
     return full_text[:config.MAX_TEXT_CONTEXT_CHARS]
 
 
+def _get_chapter_images(
+    heading: str,
+    points: list,
+    vector_store,
+    all_images: list,
+    k: int = 3,
+) -> list:
+    """
+    利用 FAISS 向量库按章节语义检索最相关的图片。
+    
+    原理：图片的 rich_context 已作为带 metadata={"type":"image"} 的文档
+    嵌入 FAISS。用章节标题+要点作为 Query 查询，筛选出 image 类型的
+    结果，返回最相关的 Top K 张图片。
+    
+    Args:
+        heading: 当前章节标题。
+        points: 当前章节要点列表。
+        vector_store: FAISS 向量库实例（如果为 None 则回退到全量）。
+        all_images: 全部可用图片列表。
+        k: 最多返回多少张图片。
+        
+    Returns:
+        list: 与该章节语义最相关的图片信息列表。
+    """
+    if vector_store is None or not all_images:
+        # 回退到全局模式
+        return all_images
+    
+    try:
+        # 用章节标题 + 要点组合成检索 Query
+        query = heading + " " + " ".join(points[:6])
+        
+        # 检索更多结果（因为大部分是文本 Chunk，图片占少数）
+        retriever = vector_store.as_retriever(search_kwargs={"k": 20})
+        retrieved_docs = retriever.invoke(query)
+        
+        # 筛选出 image 类型的文档
+        matched_image_ids = []
+        for doc in retrieved_docs:
+            if doc.metadata.get("type") == "image":
+                img_id = doc.metadata.get("image_id")
+                if img_id and img_id not in matched_image_ids:
+                    matched_image_ids.append(img_id)
+                    if len(matched_image_ids) >= k:
+                        break
+        
+        if matched_image_ids:
+            # 按检索到的 ID 从全量图片中取出完整图片信息
+            img_dict = {img["id"]: img for img in all_images}
+            chapter_images = [img_dict[iid] for iid in matched_image_ids if iid in img_dict]
+            
+            print(f"[RAG] 章节 '{heading}' 检索到 {len(chapter_images)} 张相关图片: "
+                  f"{[img['id'] for img in chapter_images]}")
+            return chapter_images
+        else:
+            print(f"[RAG] 章节 '{heading}' 未检索到相关图片，不分发图片")
+            return []
+            
+    except Exception as e:
+        print(f"[RAG] 图片检索失败, 回退到全局模式: {e}")
+        return all_images
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def call_deepseek_write_chapter(
     heading: str,

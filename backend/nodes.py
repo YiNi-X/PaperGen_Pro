@@ -19,6 +19,7 @@ import config
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document as LCDocument
 
 # 全局缓存嵌入模型实例，避免每次调用都重新加载权重（约 100MB）
 _embeddings_model = None
@@ -33,12 +34,15 @@ def _get_embeddings():
     return _embeddings_model
 
 
-def _build_vector_store(text: str):
+def _build_vector_store(text: str, images_data: list = None):
     """
     将长文本切片并构建 FAISS 内存向量索引。
+    如果提供了 images_data，会将每张图片的 rich_context 作为独立文档
+    （带 metadata type=image）一并嵌入索引，实现按章节精准检索图片。
     
     Args:
         text: 完整的 PDF 解析文本。
+        images_data: 图片信息列表（可选），包含 rich_context 字段。
         
     Returns:
         FAISS vector store 实例，或 None（如果文本过短/构建失败）。
@@ -50,11 +54,31 @@ def _build_vector_store(text: str):
     try:
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         docs = splitter.create_documents([text])
+        
+        # 为每个纯文本 Chunk 打上 type=text 标签
+        for doc in docs:
+            doc.metadata["type"] = "text"
+        
         print(f"[RAG] 文本切片完成: {len(docs)} 个 Chunk")
+        
+        # 将图片的富上下文作为独立文档嵌入
+        img_doc_count = 0
+        if images_data:
+            for img in images_data:
+                rich_ctx = img.get("rich_context", img.get("caption_context", ""))
+                img_id = img.get("id", "")
+                if rich_ctx and len(rich_ctx) > 10 and img_id:
+                    img_doc = LCDocument(
+                        page_content=rich_ctx,
+                        metadata={"type": "image", "image_id": img_id}
+                    )
+                    docs.append(img_doc)
+                    img_doc_count += 1
+            print(f"[RAG] 图片文档嵌入: {img_doc_count} 张图片的上下文已加入向量库")
         
         embeddings = _get_embeddings()
         store = FAISS.from_documents(docs, embeddings)
-        print(f"[RAG] FAISS 向量库构建成功 (共 {len(docs)} 个向量)")
+        print(f"[RAG] FAISS 向量库构建成功 (共 {len(docs)} 个向量, 其中 {img_doc_count} 个为图片)")
         return store
     except Exception as e:
         print(f"[RAG] 向量库构建失败，将回退到传统截断模式: {e}")
@@ -107,11 +131,16 @@ def node_parse_pdf(state: PaperState) -> dict:
                     json.dump(result, f, ensure_ascii=False, indent=2)
 
             text = result.get("text", "")
-            vector_store = _build_vector_store(text)
+            images = result.get("images_data", [])
+            # 确保图片有 ID（缓存数据可能缺少）
+            for i, img in enumerate(images):
+                if "id" not in img:
+                    img["id"] = f"img_{i:03d}"
+            vector_store = _build_vector_store(text, images)
             return {
                 "pdf_content": text,
                 "is_scanned": result.get("is_scanned", True),
-                "images_data": result.get("images_data", []),
+                "images_data": images,
                 "references_data": result.get("references_data", []),
                 "vector_store": vector_store,
             }
@@ -144,17 +173,23 @@ def node_parse_pdf(state: PaperState) -> dict:
         }
 
     text = result["text"]
+    images = result["images_data"]
+    # 确保图片有 ID
+    for i, img in enumerate(images):
+        if "id" not in img:
+            img["id"] = f"img_{i:03d}"
+
     print(f"[Node] node_parse_pdf: 解析完成, "
           f"文本长度={len(text)}, "
-          f"图片数={len(result['images_data'])}, "
+          f"图片数={len(images)}, "
           f"含扫描件={result['is_scanned']}")
 
-    vector_store = _build_vector_store(text)
+    vector_store = _build_vector_store(text, images)
 
     return {
         "pdf_content": text,
         "is_scanned": result["is_scanned"],
-        "images_data": result["images_data"],
+        "images_data": images,
         "references_data": result.get("references_data", []),
         "vector_store": vector_store,
     }
@@ -294,12 +329,21 @@ def node_write_chapter(state: PaperState) -> dict:
         print(f"[Node] node_write_chapter: 撰写第 {idx + 1}/{len(sections)} "
               f"章: {heading} (当前可用图片: {len(available_images_pool)} 张, 可用文献: {len(available_references_pool)} 篇)")
 
+        # RAG 精准检索：只给 AI 看当前章节最相关的图片（而非全局硬塞）
+        chapter_images = services._get_chapter_images(
+            heading=heading,
+            points=points,
+            vector_store=vector_store,
+            all_images=available_images_pool,
+            k=3,
+        )
+
         content = services.call_deepseek_write_chapter(
             heading=heading,
             points=points,
             context=pdf_context,
             full_outline=outline,
-            images_data=available_images_pool,
+            images_data=chapter_images,
             references_data=available_references_pool,
             vector_store=vector_store,
             paper_config={
