@@ -5,7 +5,11 @@ PaperGen_Pro - 侧边栏组件 (V2)
 V2 扩展为 5 步流程。
 纯 UI 组件，不包含任何业务逻辑。
 """
+import os
+import glob
 import streamlit as st
+
+import config
 
 
 def render_sidebar():
@@ -111,4 +115,14 @@ def render_sidebar():
             for key in keys_to_clear:
                 if key in st.session_state:
                     del st.session_state[key]
+            
+            # 物理清理遗留的 OCR 缓存（防止毒化缓存导致的引用/图片丢失）
+            try:
+                cache_pattern = os.path.join(config.TEMP_DIR, "ocr_cache_*.json")
+                for cache_file in glob.glob(cache_pattern):
+                    os.remove(cache_file)
+                    print(f"[Sidebar] 已清理缓存文件: {cache_file}")
+            except Exception as e:
+                print(f"[Sidebar] 清理缓存失败: {e}")
+                
             st.rerun()

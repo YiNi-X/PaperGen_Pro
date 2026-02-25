@@ -1,20 +1,21 @@
 """
 PaperGen_Pro - Word 文档生成模块
-
-使用 python-docx 将生成的论文内容（大纲、章节正文、图片）
-组装为格式化的 Word 文档。
+使用 Pandoc 引擎将 Markdown+LaTeX 一键编译为带有原生 OMML 公式的 Word 文档。
+彻底解决排版乱码、字号不齐、公式变图片等痛点。
 """
 import os
 import re
-import hashlib
-import urllib.request
-import urllib.parse
-
-from docx import Document
-from docx.shared import Inches, Pt
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-
 import config
+import pypandoc
+
+def _ensure_pandoc():
+    """确保环境中有 pandoc 引擎，如果没有则自动静默下载"""
+    try:
+        pypandoc.get_pandoc_version()
+    except OSError:
+        print("[DocWriter] 未检测到系统 Pandoc，正在开始自动下载 (约30MB)...")
+        pypandoc.download_pandoc()
+        print("[DocWriter] Pandoc 下载及配置完成！")
 
 
 def generate_docx(
@@ -24,223 +25,113 @@ def generate_docx(
     used_references: list = None,
 ) -> str:
     """
-    生成 Word 文档。
-
-    Args:
-        outline: 论文大纲 {"title": "...", "sections": [...]}.
-        sections_content: 各章节正文 {"1. 引言": "正文...", ...}.
-        images_data: 提取的图片信息列表。
-
-    Returns:
-        str: 生成的 Word 文件路径。
+    生成原生的 Word 文档。
+    将内容组装为标准 Markdown 文本，并调用 pypandoc 转换为完美排版。
     """
-    # 确保输出目录存在
+    _ensure_pandoc()
+
     os.makedirs(config.TEMP_OUTPUT_DIR, exist_ok=True)
-
-    doc = Document()
-
-    # ===== 设置标题 =====
+    
+    # 构建全文 Markdown 巨型字符串
+    md_lines = []
+    
+    # 1. 标题 (Docx 默认会把 Header 1 甚至 Title 认作标题样式)
     title = outline.get("title", "未命名论文")
-    title_para = doc.add_heading(title, level=0)
-    title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    # ===== 摘要 =====
+    md_lines.append(f"# {title}\n")
+    
+    # 2. 摘要
     abstract_points = outline.get("abstract_points", [])
     if abstract_points:
-        doc.add_heading("摘要", level=1)
+        md_lines.append("## 摘要\n")
         abstract_text = "；".join(abstract_points) + "。"
-        doc.add_paragraph(abstract_text)
-
-    # ===== 各章节正文 =====
+        md_lines.append(f"{abstract_text}\n")
+        
+    # 3. 各章节正文
+    img_dict = {img.get("id"): img for img in images_data if img.get("id")}
     sections = outline.get("sections", [])
+    
     for section in sections:
         heading = section.get("heading", "")
-        points = section.get("points", [])
-
-        # 写入章节标题
-        doc.add_heading(heading, level=1)
-
-        # 写入章节正文
+        # 主章节使用二级标题
+        md_lines.append(f"## {heading}\n")
+        
         content = sections_content.get(heading, "")
         if content:
-            pattern = r'\[INSERT_IMG_([^\]]+)\]'
-            parts = re.split(pattern, content)
-            img_dict = {img.get("id"): img for img in images_data if img.get("id")}
+            # 替换文献占位符 [REF_ref_001] -> [^1] (Markdown原生脚注语法)
+            if used_references:
+                for i, ref in enumerate(used_references, 1):
+                    ref_id = ref.get("id")
+                    # 支持兼容有无反引号的情况
+                    content = re.sub(fr'`?\[REF_{ref_id}\]`?', f"[^{i}]", content)
             
-            for i, part in enumerate(parts):
-                if i % 2 == 0:
-                    text_chunk = part.strip()
-                    if not text_chunk:
-                        continue
-                    paragraphs = text_chunk.split("\n\n")
-                    for para_text in paragraphs:
-                        para_text = para_text.strip()
-                        if not para_text:
-                            continue
-                        if para_text.startswith("### "):
-                            sub_heading = para_text.lstrip("#").strip()
-                            doc.add_heading(sub_heading, level=2)
-                        elif para_text.startswith("## "):
-                            continue
-                        else:
-                            _add_paragraph_with_math(doc, para_text, used_references)
-                else:
-                    img_id = part.strip()
-                    if img_id in img_dict:
-                        img_info = img_dict[img_id]
-                        _insert_image(doc, img_info)
-                        img_info["_inserted"] = True
-                    else:
-                        print(f"[DocWriter] WARNING: AI referenced missing image ID: {img_id}")
+            # 剔除找不到的孤儿占位符，防止它们暴露在正文中
+            content = re.sub(r'`?\[REF_[^\]]+\]`?', "", content)
+
+            # 替换图片占位符 [INSERT_IMG_img_001] -> ![图注](绝对物理路径)
+            def img_replacer(match):
+                img_id = match.group(1)
+                img_info = img_dict.get(img_id)
+                if img_info:
+                    img_info["_inserted"] = True
+                    img_path = img_info.get("path", "")
+                    # Pandoc 图片路径最好使用正斜杠
+                    img_path = img_path.replace("\\", "/")
+                    caption = img_info.get("caption_context", "").strip()
+                    m = re.search(r'((?:图|Figure|Fig\.?)\s*\d+[^。，\.]+)', caption, re.IGNORECASE)
+                    cap_text = m.group(1).strip() if m else "Figure"
+                    if not cap_text and caption:
+                        cap_text = caption[:80] + "..." if len(caption) > 80 else caption
+                        
+                    return f"\n![{cap_text}]({img_path})\n"
+                return ""
+            
+            content = re.sub(r'\[INSERT_IMG_([^\]]+)\]', img_replacer, content)
+            
+            md_lines.append(content)
+            md_lines.append("\n")
         else:
-            doc.add_paragraph(f"（{heading} 的正文尚未生成）")
-
-        # 废弃传统的硬插逻辑，完全由 AI 的占位符决定图片位置
-
-    # ===== 附录：所有图片汇总 =====
-    remaining_images = [
-        img for img in images_data
-        if not img.get("_inserted", False)
-    ]
+            md_lines.append(f"（{heading} 的正文尚未生成）\n\n")
+            
+    # 4. 附录：未被调用的图片汇总
+    remaining_images = [img for img in images_data if not img.get("_inserted", False)]
     if remaining_images:
-        doc.add_heading("附录：图片汇总", level=1)
+        md_lines.append("## 附录：图片汇总\n")
         for img_info in remaining_images:
-            _insert_image(doc, img_info)
-
-    # ===== 附录：参考文献 =====
-    if used_references:
-        doc.add_heading("参考文献 (References)", level=1)
-        # 用带编号的列表排列
-        for i, ref in enumerate(used_references, 1):
-            p = doc.add_paragraph(f"[{i}] {ref.get('text', '')}")
-            # 设置下悬挂缩进等样式
-            p.paragraph_format.left_indent = Pt(20)
-            p.paragraph_format.first_line_indent = Pt(-20)
-
-    # ===== 保存文件 =====
-    output_path = os.path.join(config.TEMP_OUTPUT_DIR, "paper_output.docx")
-    doc.save(output_path)
-
-    print(f"[DocWriter] Word 文档已生成: {output_path}")
-    return output_path
-
-
-def _insert_image(doc: Document, img_info: dict) -> None:
-    """
-    向 Word 文档中插入单张图片及其图注。
-    """
-    img_path = img_info.get("path", "")
-    caption = img_info.get("caption_context", "")
-
-    if not os.path.exists(img_path):
-        print(f"[DocWriter] 图片文件不存在，跳过: {img_path}")
-        return
-
-    try:
-        doc.add_picture(img_path, width=Inches(5.0))
-
-        # 添加图注（尝试智能提取 Figure 1 / 图 1 或者截断保留重点）
-        caption_clean = caption.strip()
-        m = re.search(r'((?:图|Figure|Fig\.?)\s*\d+[^。，\.]+)', caption_clean, re.IGNORECASE)
-        if m:
-            caption_text = m.group(1).strip()
-        elif caption_clean:
+            img_path = img_info.get("path", "").replace("\\", "/")
+            caption = img_info.get("caption_context", "Figure").strip()
             # 缩短截断，防止大片文本破坏版面
-            caption_text = caption_clean[:80] + "..." if len(caption_clean) > 80 else caption_clean
-        else:
-            caption_text = "Figure"
-
-        caption_para = doc.add_paragraph(caption_text)
-        caption_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        # 设置图注字体为小号斜体
-        for run in caption_para.runs:
-            run.font.size = Pt(9)
-            run.font.italic = True
-
-        print(f"[DocWriter] 插入图片: {os.path.basename(img_path)}")
-
-    except Exception as e:
-        print(f"[DocWriter] 插入图片失败: {img_path}, 错误: {e}")
-
-def _render_latex_to_image(latex_str: str) -> str:
-    """调用外部 API 将 LaTeX 渲染为 PNG 图片并缓存"""
+            caption = caption[:80] + "..." if len(caption) > 80 else caption
+            md_lines.append(f"\n![{caption}]({img_path})\n")
+            
+    # 5. 附录：参考文献（声明原生脚注内容）
+    if used_references:
+        md_lines.append("\n## 参考文献\n")
+        for i, ref in enumerate(used_references, 1):
+            ref_text = ref.get("text", "").strip()
+            md_lines.append(f"[^{i}]: {ref_text}\n")
+            
+    full_markdown = "\n".join(md_lines)
+    
+    # 6. 交给 Pandoc 编译
+    output_path = os.path.join(config.TEMP_OUTPUT_DIR, "paper_output.docx")
+    
+    print(f"[DocWriter] 正在启动 Pandoc 编译全文 (字数: {len(full_markdown)})...")
+    
     try:
-        encoded_eq = urllib.parse.quote(latex_str.strip())
-        
-        hasher = hashlib.md5()
-        hasher.update(latex_str.encode("utf-8"))
-        cache_key = hasher.hexdigest()
-        
-        output_path = os.path.join(config.TEMP_DIR, f"math_{cache_key}.png")
-        if os.path.exists(output_path):
-            return output_path
-            
-        url = f"https://latex.codecogs.com/png.image?\\dpi{{300}}\\bg{{white}}%20{encoded_eq}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=10) as response:
-            with open(output_path, 'wb') as f:
-                f.write(response.read())
-        return output_path
+        pypandoc.convert_text(
+            source=full_markdown,
+            to='docx',
+            format='markdown',
+            outputfile=output_path,
+            extra_args=['--wrap=none'] # 保留原有换行，不强制折行
+        )
+        print(f"[DocWriter] Word 文档已通过 Pandoc 成功生成原生排版: {output_path}")
     except Exception as e:
-        print(f"[DocWriter] 公式渲染失败 '{latex_str[:20]}': {e}")
-        return ""
-
-def _add_paragraph_with_math(doc: Document, text: str, used_references: list = None) -> None:
-    """
-    向文档添加段落，自动解析：
-    1. $...$ (行内) 和 $$...$$ (居中块) 公式，并将其渲染为图片。
-    2. [REF_xxx] 参考文献占位符，转换为上标数字如 [1]。
-    """
-    p = doc.add_paragraph()
-    
-    # 扩展正则，把 [REF_xxx] 也单独捕获出来保留
-    # (?s) 即 re.DOTALL，允许 . 匹配包含换行符在内的多行公式
-    # 加入 \`? 容错 AI 错误加上反引号的情况
-    pattern = r'(?s)(\$\$.+?\$\$|\$.+?\$|`?\[REF_[^\]]+\]`?)'
-    parts = re.split(pattern, text)
-    
-    for part in parts:
-        if not part:
-            continue
-            
-        part_clean = part.strip()
-            
-        if part_clean.startswith("$$") and part_clean.endswith("$$"):
-            # Block math
-            math_str = part_clean[2:-2].replace("\n", " ").strip()
-            img_path = _render_latex_to_image(math_str)
-            if img_path:
-                run = p.add_run()
-                run.add_picture(img_path, height=Pt(16))
-            else:
-                p.add_run(part)
-        elif part_clean.startswith("$") and part_clean.endswith("$"):
-            # Inline math
-            math_str = part_clean[1:-1].replace("\n", " ").strip()
-            img_path = _render_latex_to_image(math_str)
-            if img_path:
-                run = p.add_run()
-                run.add_picture(img_path, height=Pt(11))
-            else:
-                p.add_run(part)
-        elif part_clean.startswith("`[REF_") or part_clean.startswith("[REF_"):
-            # Citation placeholder
-            if used_references is not None:
-                # 兼容去除可能存在的首尾反引号
-                ref_match = re.search(r'\[REF_([^\]]+)\]', part_clean)
-                if ref_match:
-                    ref_id = ref_match.group(1)
-                    # 去查找它是第几个被使用的（1-based index）
-                    try:
-                        index = next(i for i, r in enumerate(used_references) if r["id"] == ref_id) + 1
-                        run = p.add_run(f"[{index}]")
-                        run.font.superscript = True
-                    except StopIteration:
-                        # 找不到这篇文献（如池子为空却被幻觉创造），原样输出
-                        p.add_run(part)
-                else:
-                    p.add_run(part)
-            else:
-                p.add_run(part)
-        else:
-            p.add_run(part)
+        print(f"[DocWriter] Pandoc 编译失败: {e}")
+        # fallback 空文档防系统崩溃
+        from docx import Document
+        doc = Document()
+        doc.add_paragraph("Pandoc 编译遇到毁灭性错误，请检查后台日志。")
+        doc.save(output_path)
+        
+    return output_path
