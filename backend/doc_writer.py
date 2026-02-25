@@ -57,12 +57,11 @@ def generate_docx(
         
         content = sections_content.get(heading, "")
         if content:
-            # 替换文献占位符 [REF_ref_001] -> [^1] (Markdown原生脚注语法)
+            # 替换文献占位符 [REF_ref_001] -> ^[1]^ (Pandoc原生上标语法，避免生成页脚注)
             if used_references:
                 for i, ref in enumerate(used_references, 1):
                     ref_id = ref.get("id")
-                    # 支持兼容有无反引号的情况
-                    content = re.sub(fr'`?\[REF_{ref_id}\]`?', f"[^{i}]", content)
+                    content = re.sub(fr'`?\[REF_{ref_id}\]`?', f"^[{i}]^", content)
             
             # 剔除找不到的孤儿占位符，防止它们暴露在正文中
             content = re.sub(r'`?\[REF_[^\]]+\]`?', "", content)
@@ -82,7 +81,8 @@ def generate_docx(
                     if not cap_text and caption:
                         cap_text = caption[:80] + "..." if len(caption) > 80 else caption
                         
-                    return f"\n![{cap_text}]({img_path})\n"
+                    # 添加 Pandoc 专属的图片尺寸限制，防止撑爆 Word 版面
+                    return f"\n![{cap_text}]({img_path}){{width=5.5in}}\n"
                 return ""
             
             content = re.sub(r'\[INSERT_IMG_([^\]]+)\]', img_replacer, content)
@@ -99,16 +99,15 @@ def generate_docx(
         for img_info in remaining_images:
             img_path = img_info.get("path", "").replace("\\", "/")
             caption = img_info.get("caption_context", "Figure").strip()
-            # 缩短截断，防止大片文本破坏版面
             caption = caption[:80] + "..." if len(caption) > 80 else caption
-            md_lines.append(f"\n![{caption}]({img_path})\n")
+            md_lines.append(f"\n![{caption}]({img_path}){{width=5.5in}}\n")
             
-    # 5. 附录：参考文献（声明原生脚注内容）
+    # 5. 附录：参考文献（作为文末列表，而非页脚注）
     if used_references:
         md_lines.append("\n## 参考文献\n")
         for i, ref in enumerate(used_references, 1):
             ref_text = ref.get("text", "").strip()
-            md_lines.append(f"[^{i}]: {ref_text}\n")
+            md_lines.append(f"{i}. {ref_text}\n")
             
     full_markdown = "\n".join(md_lines)
     
