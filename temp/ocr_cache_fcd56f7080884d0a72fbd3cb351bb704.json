@@ -247,5 +247,43 @@
       "source_file": "end-to-end-dl-using-px.pdf",
       "size": "402x268"
     }
+  ],
+  "references_data": [
+    {
+      "id": "ref_000",
+      "text": "Y. LeCun, B. Boser, J. S. Denker, D. Henderson, R. E. Howard, W. Hubbard, and L. D. Jackel. Backpropagation applied to handwritten zip code recognition. *Neural Computation*, 1(4):541–551, Winter 1989. URL: http://yann.lecun.org/exdb/publis/pdf/lecun-89e.pdf."
+    },
+    {
+      "id": "ref_001",
+      "text": "Alex Krizhevsky, Ilya Sutskever, and Geoffrey E. Hinton. Imagenet classification with deep convolutional neural networks. In F. Pereira, C. J. C. Burges, L. Bottou, and K. Q. Weinberger, editors, *Advances in Neural Information Processing Systems 25*, pages 1097–1105. Curran Associates, Inc., 2012. URL: http://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks.pdf."
+    },
+    {
+      "id": "ref_002",
+      "text": "L. D. Jackel, D. Sharman, Stenard C. E., Strom B. I., , and D Zuckert. Optical character recognition for self-service banking. *AT&T Technical Journal*, 74(1):16–24, 1995."
+    },
+    {
+      "id": "ref_003",
+      "text": "Large scale visual recognition challenge (ILSVRC). URL: http://www.image-net.org/challenges/LSVRC/."
+    },
+    {
+      "id": "ref_004",
+      "text": "Net-Scale Technologies, Inc. Autonomous off-road vehicle control using end-to-end learning, July 2004. Final technical report. URL: http://net-scale.com/doc/net-scale-dave-report.pdf."
+    },
+    {
+      "id": "ref_005",
+      "text": "Dean A. Pomerleau. ALVINN, an autonomous land vehicle in a neural network. Technical report, Carnegie Mellon University, 1989. URL: http://repository.cmu.edu/cgi/viewcontent.cgi?article=2874&context=compsci."
+    },
+    {
+      "id": "ref_006",
+      "text": "Wikipedia.org. DARPA LAGR program. http://en.wikipedia.org/wiki/DARPA_LAGR_Program."
+    },
+    {
+      "id": "ref_007",
+      "text": "Danwei Wang and Feng Qi. Trajectory planning for a four-wheel-steering vehicle. In *Proceedings of the 2001 IEEE International Conference on Robotics & Automation*, May 21–26 2001. URL: http://www.ntu.edu.sg/home/edwwang/confpapers/wdwicar01.pdf."
+    },
+    {
+      "id": "ref_008",
+      "text": "DAVE 2 driving a lincoln. URL: https://drive.google.com/open?id=0B9raQzOpiznlTkRIa241ZnBEcjQ."
+    }
   ]
 }

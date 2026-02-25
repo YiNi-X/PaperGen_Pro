@@ -139,8 +139,16 @@ def _insert_image(doc: Document, img_info: dict) -> None:
     try:
         doc.add_picture(img_path, width=Inches(5.0))
 
-        # 添加图注（去除冗长的来源页码记录，只保留最核心的图名或简述）
-        caption_text = caption.strip() if caption and len(caption) < 200 else "Figure"
+        # 添加图注（尝试智能提取 Figure 1 / 图 1 或者截断保留重点）
+        caption_clean = caption.strip()
+        m = re.search(r'((?:图|Figure|Fig\.?)\s*\d+[^。，\.]+)', caption_clean, re.IGNORECASE)
+        if m:
+            caption_text = m.group(1).strip()
+        elif caption_clean:
+            # 缩短截断，防止大片文本破坏版面
+            caption_text = caption_clean[:80] + "..." if len(caption_clean) > 80 else caption_clean
+        else:
+            caption_text = "Figure"
 
         caption_para = doc.add_paragraph(caption_text)
         caption_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -187,42 +195,50 @@ def _add_paragraph_with_math(doc: Document, text: str, used_references: list = N
     
     # 扩展正则，把 [REF_xxx] 也单独捕获出来保留
     # (?s) 即 re.DOTALL，允许 . 匹配包含换行符在内的多行公式
-    pattern = r'(?s)(\$\$.+?\$\$|\$.+?\$|\[REF_[^\]]+\])'
+    # 加入 \`? 容错 AI 错误加上反引号的情况
+    pattern = r'(?s)(\$\$.+?\$\$|\$.+?\$|`?\[REF_[^\]]+\]`?)'
     parts = re.split(pattern, text)
     
     for part in parts:
         if not part:
             continue
             
-        if part.startswith("$$") and part.endswith("$$"):
+        part_clean = part.strip()
+            
+        if part_clean.startswith("$$") and part_clean.endswith("$$"):
             # Block math
-            math_str = part[2:-2].replace("\n", " ").strip()
+            math_str = part_clean[2:-2].replace("\n", " ").strip()
             img_path = _render_latex_to_image(math_str)
             if img_path:
                 run = p.add_run()
                 run.add_picture(img_path, height=Pt(16))
             else:
                 p.add_run(part)
-        elif part.startswith("$") and part.endswith("$"):
+        elif part_clean.startswith("$") and part_clean.endswith("$"):
             # Inline math
-            math_str = part[1:-1].replace("\n", " ").strip()
+            math_str = part_clean[1:-1].replace("\n", " ").strip()
             img_path = _render_latex_to_image(math_str)
             if img_path:
                 run = p.add_run()
                 run.add_picture(img_path, height=Pt(11))
             else:
                 p.add_run(part)
-        elif part.startswith("[REF_") and part.endswith("]"):
+        elif part_clean.startswith("`[REF_") or part_clean.startswith("[REF_"):
             # Citation placeholder
             if used_references is not None:
-                ref_id = part[5:-1]
-                # 去查找它是第几个被使用的（1-based index）
-                try:
-                    index = next(i for i, r in enumerate(used_references) if r["id"] == ref_id) + 1
-                    run = p.add_run(f"[{index}]")
-                    run.font.superscript = True
-                except StopIteration:
-                    # 找不到这篇文献（理论上不会走到这里）
+                # 兼容去除可能存在的首尾反引号
+                ref_match = re.search(r'\[REF_([^\]]+)\]', part_clean)
+                if ref_match:
+                    ref_id = ref_match.group(1)
+                    # 去查找它是第几个被使用的（1-based index）
+                    try:
+                        index = next(i for i, r in enumerate(used_references) if r["id"] == ref_id) + 1
+                        run = p.add_run(f"[{index}]")
+                        run.font.superscript = True
+                    except StopIteration:
+                        # 找不到这篇文献（如池子为空却被幻觉创造），原样输出
+                        p.add_run(part)
+                else:
                     p.add_run(part)
             else:
                 p.add_run(part)

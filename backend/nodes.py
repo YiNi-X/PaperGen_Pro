@@ -330,11 +330,9 @@ def node_write_chapter(state: PaperState) -> dict:
                 ref_item = next((r for r in available_references_pool if r["id"] == ref_id), None)
                 if ref_item and ref_item not in used_references:
                     used_references.append(ref_item)
-            # 同样从可用池中剔除，防止同一篇文献被重复列入占位符
-            available_references_pool = [
-                r for r in available_references_pool 
-                if r["id"] not in used_ref_ids
-            ]
+            
+            # 注释旧逻辑：不要从可用文献池中剔除，因为不同章节可能引用同一篇文献
+            # 只有图片为了防止重复插入才需要剔除
 
     print(f"[Node] node_write_chapter: 全部 {len(sections)} 章撰写完成")
     return {
