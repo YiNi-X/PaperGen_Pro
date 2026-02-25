@@ -12,6 +12,55 @@ from openai import OpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 import config
+import re
+
+def _extract_json_from_text(text: str, func_name: str = "Unknown"):
+    """
+    通用、高容错的 JSON 提取器。
+    专门应对大模型 (如 DeepSeek R1) 在真正 JSON 输出前加上的 <think> 推理块或寒暄废话。
+    使用非贪婪正则直接刮取最外层的 { ... } 或 [ ... ]。
+    """
+    if not text:
+        return None
+        
+    text = text.strip()
+    
+    # 手动剔除带有闭合标签的 <think>...</think> 块，防止其内部恰好有不完整的 JSON 打扰提取
+    # (?s) 表示 re.DOTALL (让 . 能匹配换行符)
+    text = re.sub(r'(?s)<think>.*?</think>', '', text).strip()
+    
+    try:
+        # 1. 优先尝试直接完整解析
+        return json.loads(text)
+    except json.JSONDecodeError:
+        print(f"[Service] {func_name}: 直接解析失败，尝试剥离 Markdown 提取 JSON...")
+        pass
+
+    # 2. 尝试提取带有 markdown block 的 JSON
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    if match:
+        try:
+            return json.loads(match.group(1).strip())
+        except json.JSONDecodeError:
+            print(f"[Service] {func_name}: Markdown 块解析失败。")
+
+    # 3. 终极暴力正则匹配：寻找最先出现的外层 {...} 或 [...]
+    # 这里我们分别找最长的 {} 和 [] 组合，看谁更像合法的 JSON
+    dict_match = re.search(r'(?s)(\{.*\})', text)
+    list_match = re.search(r'(?s)(\[.*\])', text)
+    
+    candidates = []
+    if dict_match: candidates.append(dict_match.group(1).strip())
+    if list_match: candidates.append(list_match.group(1).strip())
+    
+    for cand in candidates:
+        try:
+            return json.loads(cand)
+        except json.JSONDecodeError:
+            continue
+            
+    print(f"[Service] {func_name}: 所有尝试均失败，无法从返回内容中提取有效 JSON。\n片段: {text[:100]}")
+    return None
 
 
 # =====================================================================
@@ -122,11 +171,12 @@ def call_deepseek_recommend_title(
     )
 
     result_text = response.choices[0].message.content
-    try:
-        data = json.loads(result_text)
+    data = _extract_json_from_text(result_text, "call_deepseek_recommend_title")
+    if data and isinstance(data, dict):
         return data.get("titles", [])
-    except json.JSONDecodeError:
-        return []
+    elif data and isinstance(data, list):
+        return data
+    return []
 
 # =====================================================================
 # DeepSeek 服务 - AI 提取参考文献 (Phase 7 新增)
@@ -170,36 +220,25 @@ def extract_references_from_text(pdf_text: str) -> list:
     )
 
     result_text = response.choices[0].message.content
-    
-    # 清理大模型可能带上的 markdown 标记
-    result_text = result_text.strip()
-    if result_text.startswith("```json"):
-        result_text = result_text[7:]
-    if result_text.startswith("```"):
-        result_text = result_text[3:]
-    if result_text.endswith("```"):
-        result_text = result_text[:-3]
-    result_text = result_text.strip()
+    data = _extract_json_from_text(result_text, "extract_references_from_text")
 
-    try:
-        data = json.loads(result_text)
-        # 兼容处理如果是 {"references": [...]} 或 直接是 [...]
-        refs_list = data if isinstance(data, list) else data.get("references", data.get("References", []))
-        
-        # 格式化加上 ID
-        formatted_refs = []
-        for i, ref in enumerate(refs_list):
-            text_val = ref.get("text", str(ref)) if isinstance(ref, dict) else str(ref)
-            if len(text_val) > 10: # 剔除过短的异常条目
-                formatted_refs.append({
-                    "id": f"ref_{i:03d}",
-                    "text": text_val.strip()
-                })
-        print(f"[Service] 成功提取到 {len(formatted_refs)} 条参考文献。")
-        return formatted_refs
-    except json.JSONDecodeError as e:
-        print(f"[Service] 参考文献解析 JSON 失败: {e}\n返回值: {result_text[:100]}")
+    if not data:
         return []
+
+    # 兼容处理如果是 {"references": [...]} 或 直接是 [...]
+    refs_list = data if isinstance(data, list) else data.get("references", data.get("References", []))
+    
+    # 格式化加上 ID
+    formatted_refs = []
+    for i, ref in enumerate(refs_list):
+        text_val = ref.get("text", str(ref)) if isinstance(ref, dict) else str(ref)
+        if len(text_val) > 10: # 剔除过短的异常条目
+            formatted_refs.append({
+                "id": f"ref_{i:03d}",
+                "text": text_val.strip()
+            })
+    print(f"[Service] 成功提取到 {len(formatted_refs)} 条参考文献。")
+    return formatted_refs
 
 # =====================================================================
 # DeepSeek 服务 - AI 生成关键词
@@ -255,14 +294,13 @@ def call_deepseek_generate_keywords(
     )
 
     result_text = response.choices[0].message.content
-    try:
-        data = json.loads(result_text)
+    data = _extract_json_from_text(result_text, "call_deepseek_generate_keywords")
+    if data and isinstance(data, dict):
         return {
             "cn": data.get("cn", [])[:4],
             "en": data.get("en", [])[:4],
         }
-    except json.JSONDecodeError:
-        return {"cn": [], "en": []}
+    return {"cn": [], "en": []}
 
 
 # =====================================================================
@@ -288,21 +326,12 @@ def _build_config_context(paper_config: dict) -> str:
 
 
 def _parse_json_response(result_text: str, func_name: str) -> dict:
-    """解析 AI 返回的 JSON（支持 Markdown 代码块提取）。"""
-    try:
-        return json.loads(result_text)
-    except json.JSONDecodeError:
-        print(f"[Service] {func_name}: JSON 解析失败，尝试提取 JSON 块...")
-        import re
-        match = re.search(r"```(?:json)?\s*([\s\S]*?)```", result_text)
-        if match:
-            try:
-                return json.loads(match.group(1).strip())
-            except json.JSONDecodeError:
-                print(f"[Service] {func_name}: 提取的 JSON 块再次解析失败，返回 {{}}")
-                return {}
-        print(f"[Service] {func_name}: 无法解析 AI 返回的 JSON，返回 {{}}。片段: {result_text[:100]}")
-        return {}
+    """包装一下通用的 _extract_json_from_text，返回骨架所需的 dict。"""
+    data = _extract_json_from_text(result_text, func_name)
+    if isinstance(data, dict):
+        return data
+    print(f"[Service] {func_name}: 提取的结果不是字典类型，返回空 {{}}")
+    return {}
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))

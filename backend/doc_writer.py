@@ -35,9 +35,12 @@ def generate_docx(
     # 构建全文 Markdown 巨型字符串
     md_lines = []
     
-    # 1. 标题 (Docx 默认会把 Header 1 甚至 Title 认作标题样式)
+    # 1. 标题 (使用 Pandoc YAML Header 确保在 Word 里呈现为真正的 Title 样式而不是 Heading 1)
     title = outline.get("title", "未命名论文")
-    md_lines.append(f"# {title}\n")
+    md_lines.append("---")
+    md_lines.append(f"title: {title}")
+    md_lines.append("---")
+    md_lines.append("\n")
     
     # 2. 摘要
     abstract_points = outline.get("abstract_points", [])
