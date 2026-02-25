@@ -10,3 +10,5 @@ python-docx>=1.0.0
 langchain-community>=0.0.10
 faiss-cpu>=1.7.4
 tiktoken>=0.7.0
+sentence-transformers>=3.0.0
+langchain-huggingface>=0.1.0

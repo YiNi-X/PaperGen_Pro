@@ -520,6 +520,41 @@ def call_deepseek_review_outline(outline: dict) -> str:
 # DeepSeek 服务 - 用于分章节写作
 # =====================================================================
 
+def _get_chapter_context(heading: str, points: list, full_text: str, vector_store=None) -> str:
+    """
+    为当前章节获取最佳参考素材上下文。
+    
+    如果提供了 vector_store (FAISS)，则使用语义检索获取 Top K 最相关的片段。
+    否则回退到传统的全文截断模式。
+    
+    Args:
+        heading: 当前章节标题。
+        points: 当前章节要点列表。
+        full_text: 完整的 PDF 解析文本（回退用）。
+        vector_store: FAISS 向量库实例（可选）。
+        
+    Returns:
+        str: 拼接好的上下文字符串。
+    """
+    if vector_store is not None:
+        try:
+            # 用章节标题 + 要点组合成检索 Query
+            query = heading + " " + " ".join(points[:6])
+            retriever = vector_store.as_retriever(search_kwargs={"k": 5})
+            retrieved_docs = retriever.invoke(query)
+            
+            rag_context = "\n\n---\n\n".join([doc.page_content for doc in retrieved_docs])
+            print(f"[RAG] 章节 '{heading}' 检索到 {len(retrieved_docs)} 个相关片段 "
+                  f"(共 {len(rag_context)} 字)")
+            return rag_context
+        except Exception as e:
+            print(f"[RAG] 检索失败，回退到截断模式: {e}")
+    
+    # 回退：传统截断
+    print(f"[Service] 使用传统截断模式 (前 {config.MAX_TEXT_CONTEXT_CHARS} 字)")
+    return full_text[:config.MAX_TEXT_CONTEXT_CHARS]
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def call_deepseek_write_chapter(
     heading: str,
@@ -528,6 +563,7 @@ def call_deepseek_write_chapter(
     full_outline: dict,
     images_data: list = None,
     references_data: list = None,
+    vector_store = None,
     paper_config: dict = None,
 ) -> str:
     """
@@ -609,7 +645,7 @@ def call_deepseek_write_chapter(
         f"{image_descriptions}\n\n"
         f"## 可用参考文献列表\n"
         f"{reference_descriptions}\n\n"
-        f"## 参考素材\n{context[:config.MAX_TEXT_CONTEXT_CHARS]}"
+        f"## 参考素材\n{_get_chapter_context(heading, points, context, vector_store)}"
     )
 
     response = client.chat.completions.create(

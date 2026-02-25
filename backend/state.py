@@ -5,7 +5,7 @@ PaperGen_Pro - LangGraph 状态定义 (V2)
 管理论文生成工作流中各节点之间的数据传递。
 支持多文件上传、图文分离、分章节写作。
 """
-from typing import List, Dict, Tuple, TypedDict
+from typing import Any, List, Dict, Tuple, TypedDict
 
 
 class PaperState(TypedDict):
@@ -61,6 +61,11 @@ class PaperState(TypedDict):
     # 已经被 AI 选中并排过序的参考文献列表 (Phase 7 新增)
     # 用于最终排版文末的 References 章节以及生成正确的正文上标 [1], [2]
     used_references: List[Dict]
+
+    # RAG 向量检索库 (Phase 3 新增)
+    # 存储基于 BAAI/bge-small-zh-v1.5 嵌入的 FAISS 内存索引
+    # 用于在 node_write_chapter 时按章节语义检索最相关的原文片段
+    vector_store: Any
 
     # ===== 大纲阶段 =====
     # 用户输入的写作方向 / 意图

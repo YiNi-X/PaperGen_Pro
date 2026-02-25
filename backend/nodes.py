@@ -8,12 +8,58 @@ import hashlib
 import json
 import os
 import re
+import logging
 
 from backend.state import PaperState
 from backend import services
 from backend import pdf_parser
 from backend import doc_writer
 import config
+
+# RAG 相关 (Phase 3)
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+
+# 全局缓存嵌入模型实例，避免每次调用都重新加载权重（约 100MB）
+_embeddings_model = None
+
+def _get_embeddings():
+    """延迟加载并缓存 BGE 嵌入模型单例。"""
+    global _embeddings_model
+    if _embeddings_model is None:
+        print("[RAG] 首次加载 BAAI/bge-small-zh-v1.5 嵌入模型...")
+        _embeddings_model = HuggingFaceEmbeddings(model_name="BAAI/bge-small-zh-v1.5")
+        print("[RAG] 嵌入模型加载完成。")
+    return _embeddings_model
+
+
+def _build_vector_store(text: str):
+    """
+    将长文本切片并构建 FAISS 内存向量索引。
+    
+    Args:
+        text: 完整的 PDF 解析文本。
+        
+    Returns:
+        FAISS vector store 实例，或 None（如果文本过短/构建失败）。
+    """
+    if not text or len(text) < 200:
+        print("[RAG] 文本过短，跳过向量库构建。")
+        return None
+    
+    try:
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        docs = splitter.create_documents([text])
+        print(f"[RAG] 文本切片完成: {len(docs)} 个 Chunk")
+        
+        embeddings = _get_embeddings()
+        store = FAISS.from_documents(docs, embeddings)
+        print(f"[RAG] FAISS 向量库构建成功 (共 {len(docs)} 个向量)")
+        return store
+    except Exception as e:
+        print(f"[RAG] 向量库构建失败，将回退到传统截断模式: {e}")
+        return None
 
 
 def node_parse_pdf(state: PaperState) -> dict:
@@ -61,11 +107,14 @@ def node_parse_pdf(state: PaperState) -> dict:
                 with open(cache_file, "w", encoding="utf-8") as f:
                     json.dump(result, f, ensure_ascii=False, indent=2)
 
+            text = result.get("text", "")
+            vector_store = _build_vector_store(text)
             return {
-                "pdf_content": result.get("text", ""),
+                "pdf_content": text,
                 "is_scanned": result.get("is_scanned", True),
                 "images_data": result.get("images_data", []),
                 "references_data": result.get("references_data", []),
+                "vector_store": vector_store,
             }
         except Exception as e:
             print(f"[Node] node_parse_pdf: 读取或更新缓存失败，将重新进行 OCR: {e}")
@@ -95,16 +144,20 @@ def node_parse_pdf(state: PaperState) -> dict:
             "references_data": [],
         }
 
+    text = result["text"]
     print(f"[Node] node_parse_pdf: 解析完成, "
-          f"文本长度={len(result['text'])}, "
+          f"文本长度={len(text)}, "
           f"图片数={len(result['images_data'])}, "
           f"含扫描件={result['is_scanned']}")
 
+    vector_store = _build_vector_store(text)
+
     return {
-        "pdf_content": result["text"],
+        "pdf_content": text,
         "is_scanned": result["is_scanned"],
         "images_data": result["images_data"],
         "references_data": result.get("references_data", []),
+        "vector_store": vector_store,
     }
 
 
@@ -216,6 +269,7 @@ def node_write_chapter(state: PaperState) -> dict:
 
     outline = state.get("outline", {})
     pdf_context = state.get("pdf_content", "")
+    vector_store = state.get("vector_store", None)
     images_data = state.get("images_data", [])
     references_data = state.get("references_data", [])
     sections = outline.get("sections", [])
@@ -248,6 +302,7 @@ def node_write_chapter(state: PaperState) -> dict:
             full_outline=outline,
             images_data=available_images_pool,
             references_data=available_references_pool,
+            vector_store=vector_store,
             paper_config={
                 "paper_language": state.get("paper_language", "中文"),
                 "academic_type": state.get("academic_type", "本科"),
