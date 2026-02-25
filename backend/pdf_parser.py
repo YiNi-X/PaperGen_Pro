@@ -126,7 +126,11 @@ def _extract_native_images(doc: fitz.Document, filename: str) -> List[Dict]:
                 caption_context = ""
                 image_rects = page.get_image_rects(xref)
                 if image_rects:
-                    caption_context = _extract_caption_context(page, image_rects[0], config.CAPTION_CONTEXT_CHARS)
+                    raw_context = _extract_caption_context(page, image_rects[0], config.CAPTION_CONTEXT_CHARS)
+                    # 清除原论文的图片标号 (例如 "Figure 1:", "图3(b) - ")，保留纯粹的图片名字+片段
+                    # 匹配: 图/Figure/Fig. + 数字 + 可能的字母编号(如 1a, 1(a), 1（b）) + 可能的分隔符
+                    pattern = r'(?:图|Figure|Fig\.?)\s*\d+(?:[a-zA-Z]|\([a-zA-Z]\)|（[a-zA-Z]）)*[\s:：\.\-]*'
+                    caption_context = re.sub(pattern, '', raw_context, flags=re.IGNORECASE).strip()
 
                 # 存入物理磁盘（供下游 doc_writer 使用）
                 safe_name = filename.replace(" ", "_").replace(".", "_")
