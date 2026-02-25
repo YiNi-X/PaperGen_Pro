@@ -1,0 +1,30 @@
+# API Keys and Secrets
+.env
+
+# Python byte-code
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Project specific ignores
+temp/
+output/
+.debug_log
+*.log
+function_test/test_rag/*.txt
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

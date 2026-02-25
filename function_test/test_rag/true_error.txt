@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "C:\Users\X\Desktop\PaperGen_Pro\function_test\test_rag\dump_error.py", line 4, in <module>
+    from langchain_community.vectorstores import FAISS
+ModuleNotFoundError: No module named 'langchain_community'

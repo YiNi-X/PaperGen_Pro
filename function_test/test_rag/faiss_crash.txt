@@ -1,0 +1,31 @@
+Traceback (most recent call last):
+  File "C:\Users\X\AppData\Local\Programs\Python\Python312\Lib\site-packages\langchain_huggingface\embeddings\huggingface.py", line 68, in __init__
+    import sentence_transformers  # type: ignore[import]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\X\AppData\Local\Programs\Python\Python312\Lib\site-packages\sentence_transformers\__init__.py", line 10, in <module>
+    from sentence_transformers.backend import (
+  File "C:\Users\X\AppData\Local\Programs\Python\Python312\Lib\site-packages\sentence_transformers\backend\__init__.py", line 3, in <module>
+    from .load import load_onnx_model, load_openvino_model
+  File "C:\Users\X\AppData\Local\Programs\Python\Python312\Lib\site-packages\sentence_transformers\backend\load.py", line 7, in <module>
+    from transformers.configuration_utils import PretrainedConfig
+  File "C:\Users\X\AppData\Local\Programs\Python\Python312\Lib\site-packages\transformers\__init__.py", line 30, in <module>
+    from . import dependency_versions_check
+  File "C:\Users\X\AppData\Local\Programs\Python\Python312\Lib\site-packages\transformers\dependency_versions_check.py", line 16, in <module>
+    from .utils.versions import require_version, require_version_core
+  File "C:\Users\X\AppData\Local\Programs\Python\Python312\Lib\site-packages\transformers\utils\__init__.py", line 76, in <module>
+    from .hub import (
+  File "C:\Users\X\AppData\Local\Programs\Python\Python312\Lib\site-packages\transformers\utils\hub.py", line 29, in <module>
+    from huggingface_hub import (
+ImportError: cannot import name 'is_offline_mode' from 'huggingface_hub' (C:\Users\X\AppData\Local\Programs\Python\Python312\Lib\site-packages\huggingface_hub\__init__.py)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\X\Desktop\PaperGen_Pro\function_test\test_rag\test_faiss_embedding.py", line 89, in <module>
+    test_rag_pipeline()
+  File "C:\Users\X\Desktop\PaperGen_Pro\function_test\test_rag\test_faiss_embedding.py", line 59, in test_rag_pipeline
+    embeddings = HuggingFaceEmbeddings(
+                 ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\X\AppData\Local\Programs\Python\Python312\Lib\site-packages\langchain_huggingface\embeddings\huggingface.py", line 74, in __init__
+    raise ImportError(msg) from exc
+ImportError: Could not import sentence_transformers python package. Please install it with `pip install sentence-transformers`.
