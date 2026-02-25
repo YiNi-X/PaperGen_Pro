@@ -93,6 +93,9 @@ def render_sidebar():
                 "pdf_content",
                 "is_scanned",
                 "images_data",
+                "references_data",
+                "used_references",
+                "vector_store",
                 "user_intent",
                 "outline_skeleton",
                 "outline_variant_a",
@@ -109,14 +112,3 @@ def render_sidebar():
                 if key in st.session_state:
                     del st.session_state[key]
             st.rerun()
-
-        # === 🛠️ 开发调试模式切换（发布前删除此段） ===
-        st.divider()
-        debug_mode = st.toggle(
-            "🛠️ 调试模式",
-            value=st.session_state.get("debug_mode", False),
-            key="toggle_debug_mode",
-        )
-        st.session_state["debug_mode"] = debug_mode
-        if debug_mode:
-            st.caption("调试面板已启用，在主页面底部查看")

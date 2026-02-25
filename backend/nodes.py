@@ -8,7 +8,6 @@ import hashlib
 import json
 import os
 import re
-import logging
 
 from backend.state import PaperState
 from backend import services

@@ -131,8 +131,6 @@ def _insert_image(doc: Document, img_info: dict) -> None:
     """
     img_path = img_info.get("path", "")
     caption = img_info.get("caption_context", "")
-    page = img_info.get("page", 0)
-    source = img_info.get("source_file", "")
 
     if not os.path.exists(img_path):
         print(f"[DocWriter] 图片文件不存在，跳过: {img_path}")
