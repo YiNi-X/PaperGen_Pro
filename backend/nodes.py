@@ -121,9 +121,9 @@ def node_parse_pdf(state: PaperState) -> dict:
             with open(cache_file, "r", encoding="utf-8") as f:
                 result = json.load(f)
             
-            # 兼容旧缓存：如果没有提取过参考文献，补齐
+            # 兼容旧缓存：如果没有提取过参考文献，或者旧提取失败为空，强制补齐
             refs_data = result.get("references_data")
-            if refs_data is None:
+            if not refs_data:
                 print(f"[Node] 旧缓存缺失参考文献数据，正在补齐提取...")
                 refs_data = services.extract_references_from_text(result.get("text", ""))
                 result["references_data"] = refs_data
@@ -369,9 +369,11 @@ def node_write_chapter(state: PaperState) -> dict:
         used_ref_ids = re.findall(r'\[REF_([^\]]+)\]', content)
         if used_ref_ids:
             print(f"[Node] node_write_chapter: 本章引用了文献: {used_ref_ids}")
-            for ref_id in used_ref_ids:
+            for raw_id in used_ref_ids:
+                raw_id = raw_id.strip()
+                normalized_id = raw_id if raw_id.startswith("ref_") else f"ref_{raw_id}"
                 # 找到这篇文献的详情
-                ref_item = next((r for r in available_references_pool if r["id"] == ref_id), None)
+                ref_item = next((r for r in available_references_pool if r["id"] == normalized_id or r["id"] == raw_id), None)
                 if ref_item and ref_item not in used_references:
                     used_references.append(ref_item)
             

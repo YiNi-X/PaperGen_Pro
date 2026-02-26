@@ -60,14 +60,22 @@ def generate_docx(
         
         content = sections_content.get(heading, "")
         if content:
-            # 替换文献占位符 [REF_ref_001] -> ^[1]^ (Pandoc原生上标语法，避免生成页脚注)
-            if used_references:
-                for i, ref in enumerate(used_references, 1):
-                    ref_id = ref.get("id")
-                    content = re.sub(fr'`?\[REF_{ref_id}\]`?', f"^[{i}]^", content)
+            # 修复 OCR/AI 带来的行内公式空格问题 `$ _t $` -> `$_t$`
+            # Pandoc 不允许内联公式内部边缘有空格
+            content = re.sub(r'(?<!\$)\$\s+([^\$]+?)\s+\$(?!\$)', r'$\1$', content)
+            content = re.sub(r'(?<!\$)\$\s+([^\$]+?)\$(?!\$)', r'$\1$', content)
+            content = re.sub(r'(?<!\$)\$([^\$]+?)\s+\$(?!\$)', r'$\1$', content)
+            # 动态替换文献占位符，兼容 AI 偷懒截断前缀导致 [REF_001] 的情况
+            def ref_replacer(match):
+                raw_id = match.group(1).strip()
+                normalized_id = raw_id if raw_id.startswith("ref_") else f"ref_{raw_id}"
+                if used_references:
+                    for i, ref in enumerate(used_references, 1):
+                        if ref.get("id") == normalized_id or ref.get("id") == raw_id:
+                            return f"^[{i}]^"
+                return ""
             
-            # 剔除找不到的孤儿占位符，防止它们暴露在正文中
-            content = re.sub(r'`?\[REF_[^\]]+\]`?', "", content)
+            content = re.sub(r'`?\[REF_([^\]]+)\]`?', ref_replacer, content)
 
             # 替换图片占位符 [INSERT_IMG_img_001] -> ![图注](绝对物理路径)
             def img_replacer(match):
@@ -78,11 +86,15 @@ def generate_docx(
                     img_path = img_info.get("path", "")
                     # Pandoc 图片路径最好使用正斜杠
                     img_path = img_path.replace("\\", "/")
-                    caption = img_info.get("caption_context", "").strip()
-                    m = re.search(r'((?:图|Figure|Fig\.?)\s*\d+[^。，\.]+)', caption, re.IGNORECASE)
-                    cap_text = m.group(1).strip() if m else "Figure"
-                    if not cap_text and caption:
-                        cap_text = caption[:80] + "..." if len(caption) > 80 else caption
+                    
+                    # 取出清洗过的真实图注（已经在 pdf_parser 阶段移除了 "Figure 1" 标号）
+                    cap_text = img_info.get("caption_context", "").strip()
+                    if not cap_text:
+                        cap_text = "Figure"
+                    
+                    # 保留最长 80 字，防止撑破版面
+                    if len(cap_text) > 80:
+                        cap_text = cap_text[:80] + "..."
                         
                     # 添加 Pandoc 专属的图片尺寸限制，防止撑爆 Word 版面
                     return f"\n![{cap_text}]({img_path}){{width=5.5in}}\n"
@@ -95,17 +107,9 @@ def generate_docx(
         else:
             md_lines.append(f"（{heading} 的正文尚未生成）\n\n")
             
-    # 4. 附录：未被调用的图片汇总
-    remaining_images = [img for img in images_data if not img.get("_inserted", False)]
-    if remaining_images:
-        md_lines.append("## 附录：图片汇总\n")
-        for img_info in remaining_images:
-            img_path = img_info.get("path", "").replace("\\", "/")
-            caption = img_info.get("caption_context", "Figure").strip()
-            caption = caption[:80] + "..." if len(caption) > 80 else caption
-            md_lines.append(f"\n![{caption}]({img_path}){{width=5.5in}}\n")
+    # (已废弃：不在文末堆砌未被前文调用的图片，保持清爽)
             
-    # 5. 附录：参考文献（作为文末列表，而非页脚注）
+    # 4. 附录：参考文献（作为文末列表，而非页脚注）
     if used_references:
         md_lines.append("\n## 参考文献\n")
         for i, ref in enumerate(used_references, 1):
